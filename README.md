@@ -10,6 +10,8 @@ It runs in your build, on the finished site:
 
 ## Set up
 
+The full guide, with what each step is for, is at [rotproof.dev/build-check](https://rotproof.dev/build-check).
+
 1. Add and verify your site at [rotproof.dev](https://rotproof.dev). The free plan is enough.
 2. Create a token at **Account → API tokens**, and save it in your repository as a secret named `ROTPROOF_TOKEN` (Settings → Secrets and variables → Actions).
 3. Add the step after the one that builds your site:
