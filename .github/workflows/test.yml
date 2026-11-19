@@ -1,0 +1,77 @@
+# The Action's own test: runs it on test/site, a tiny build of docs-test.rotproof.dev with links
+# broken on purpose, and checks what it finds. Without the ROTPROOF_TOKEN secret, only the part
+# that needs no token runs.
+name: Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      HAS_TOKEN: ${{ secrets.ROTPROOF_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check without a token
+        id: plain
+        uses: ./
+        with:
+          path: test/site
+          site: https://docs-test.rotproof.dev
+
+      - name: Expect two problems in the build and nothing else
+        env:
+          IN_BUILD: ${{ steps.plain.outputs.in-build }}
+          NEW_BREAKS: ${{ steps.plain.outputs.new-breaks }}
+        run: |
+          if [ "$IN_BUILD" != 2 ] || [ "$NEW_BREAKS" != 0 ]; then
+            echo "::error::Expected in-build 2 and new-breaks 0, got $IN_BUILD and $NEW_BREAKS."
+            exit 1
+          fi
+
+      - name: Check with fail-on all
+        id: strict
+        continue-on-error: true
+        uses: ./
+        with:
+          path: test/site
+          site: https://docs-test.rotproof.dev
+          fail-on: all
+
+      - name: Expect that to fail
+        env:
+          OUTCOME: ${{ steps.strict.outcome }}
+        run: |
+          if [ "$OUTCOME" != failure ]; then
+            echo "::error::Expected fail-on all to fail the step, got $OUTCOME."
+            exit 1
+          fi
+
+      - name: Check with a token
+        id: full
+        if: env.HAS_TOKEN == 'true'
+        uses: ./
+        with:
+          path: test/site
+          site: https://docs-test.rotproof.dev
+          token: ${{ secrets.ROTPROOF_TOKEN }}
+
+      - name: Expect two new breaks and one problem in the build
+        if: env.HAS_TOKEN == 'true'
+        env:
+          IN_BUILD: ${{ steps.full.outputs.in-build }}
+          NEW_BREAKS: ${{ steps.full.outputs.new-breaks }}
+        run: |
+          if [ "$IN_BUILD" != 1 ] || [ "$NEW_BREAKS" != 2 ]; then
+            echo "::error::Expected in-build 1 and new-breaks 2, got $IN_BUILD and $NEW_BREAKS."
+            exit 1
+          fi

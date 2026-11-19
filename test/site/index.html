@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rotproof link check: test site</title>
+</head>
+<body>
+<h1>Test site</h1>
+<p>The Action's own test (.github/workflows/test.yml) runs it on this folder, as if it were a build of docs-test.rotproof.dev. Some links here are broken on purpose.</p>
+<ul>
+<li><a href="/guide/">A page in the build</a></li>
+<li><a href="/guide/#setup">A section that's on its page</a></li>
+<li><a href="/guide/#gone">A section that isn't</a></li>
+<li><a href="/ci-check-missing-page/">A page that's neither in the build nor on the live site</a></li>
+<li><a href="https://rotproof.dev/bot">A working page on another site</a></li>
+<li><a href="https://rotproof.dev/ci-check-test-page-that-does-not-exist">A missing page on another site</a></li>
+</ul>
+</body>
+</html>

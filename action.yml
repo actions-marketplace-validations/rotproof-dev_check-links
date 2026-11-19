@@ -1,0 +1,33 @@
+name: Rotproof link check
+description: Finds broken links in a built documentation site before the change that adds them is published.
+author: Rotproof
+branding:
+  icon: link
+  color: gray-dark
+inputs:
+  path:
+    description: The folder your build writes the finished site to, such as build, site or book.
+    required: true
+  site:
+    description: The site's address as it is in Rotproof, such as https://docs.example.com.
+    required: true
+  token:
+    description: >-
+      A Rotproof API token, from a repository secret. Without one, only links to the site's own
+      pages are checked, which is what happens on a pull request from a fork.
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      When the check fails. "none" only reports (the default). "new" fails on broken links this
+      change adds. "all" also fails on links broken inside the build itself.
+    required: false
+    default: none
+outputs:
+  new-breaks:
+    description: How many broken links the change adds.
+  in-build:
+    description: How many links are broken inside the build itself.
+runs:
+  using: node24
+  main: main.cjs
