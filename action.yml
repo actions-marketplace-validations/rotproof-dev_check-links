@@ -28,6 +28,10 @@ outputs:
     description: How many broken links the change adds.
   in-build:
     description: How many links are broken inside the build itself.
+  missing-pages:
+    description: >-
+      How many pages on the live site the build has nothing at, and no redirect for. Never a
+      failure. Needs the token.
 runs:
   using: node24
   main: main.cjs
