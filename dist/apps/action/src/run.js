@@ -13,15 +13,20 @@
  *   they're written to the summary or the log (./report.ts).
  * - **Only what Rotproof confirms can fail a build on its own.** A page missing from the build
  *   may be served by something else, so it's a warning unless the live site says it's gone too.
+ * - **Live pages the build lacks are warnings, never failures** (./moved.ts). Rotproof sends its
+ *   list of the live site's pages; they're compared here.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_PAGES = exports.MAX_LISTS = exports.MAX_LIST = exports.API_ORIGIN = void 0;
-exports.pageUrl = pageUrl;
-exports.builtFile = builtFile;
+exports.MAX_LIVE_PAGES = exports.MAX_PAGES = exports.MAX_LISTS = exports.MAX_LIST = exports.API_ORIGIN = exports.pageUrl = exports.builtFile = void 0;
 exports.run = run;
 const html_scan_1 = require("../../../packages/core/src/html-scan");
 const links_1 = require("../../../packages/core/src/links");
 const url_1 = require("../../../packages/core/src/url");
+const moved_1 = require("./moved");
+const paths_1 = require("./paths");
+var paths_2 = require("./paths");
+Object.defineProperty(exports, "builtFile", { enumerable: true, get: function () { return paths_2.builtFile; } });
+Object.defineProperty(exports, "pageUrl", { enumerable: true, get: function () { return paths_2.pageUrl; } });
 exports.API_ORIGIN = "https://rotproof.dev";
 /** Addresses in one list: the endpoint's limit (LIST_CHECK_MAX_LINKS in packages/core). */
 exports.MAX_LIST = 500;
@@ -29,6 +34,8 @@ exports.MAX_LIST = 500;
 exports.MAX_LISTS = 10;
 /** Pages read from one build. A bigger site is checked as far as this. */
 exports.MAX_PAGES = 5_000;
+/** Live pages read from Rotproof: the most any plan checks (Agency's 25,000), in answers of 5,000. */
+exports.MAX_LIVE_PAGES = 25_000;
 /** Places kept for one link. The count is kept in full. */
 const MAX_PLACES = 3;
 /** How long one run waits for Rotproof in all. A list is closed after 15 minutes at most. */
@@ -50,33 +57,6 @@ function see(map, key, place) {
 }
 const finding = (url, label, detail, seen) => ({ url, label, detail, places: seen.places, placeCount: seen.count });
 const isPage = (path) => /\.html?$/i.test(path);
-/** A page's address on the site: the root, the file's path, and no index.html on the end. */
-function pageUrl(root, file) {
-    const parts = file.split("/");
-    const last = parts[parts.length - 1] ?? "";
-    if (/^index\.html?$/i.test(last))
-        parts[parts.length - 1] = "";
-    return root + parts.map(encodeURIComponent).join("/");
-}
-/**
- * The file a link to the site's own pages would be served from, or null when the build has
- * none. Tries what static hosts try: the path itself, with .html, and as a folder's index.
- */
-function builtFile(root, url, files) {
-    const rootPath = new URL(root).pathname;
-    let path = new URL(url).pathname;
-    if (`${path}/` === rootPath)
-        path = rootPath;
-    let relative;
-    try {
-        relative = path.slice(rootPath.length).split("/").map(decodeURIComponent).join("/");
-    }
-    catch {
-        return null;
-    }
-    const candidates = relative === "" || relative.endsWith("/") ? [`${relative}index.html`, `${relative}index.htm`] : [relative, `${relative}.html`, `${relative}/index.html`, `${relative}.htm`];
-    return candidates.find((candidate) => files.has(candidate)) ?? null;
-}
 /** The address with a "/" on the end of its path, so "starts with" means "inside". */
 function asRoot(address) {
     const normalized = (0, url_1.normalizeUrl)(/^[a-z][a-z0-9+.-]*:/i.test(address.trim()) ? address : `https://${address.trim()}`);
@@ -124,12 +104,37 @@ function refusal(response) {
     const message = typeof error === "object" && error !== null ? error.message : null;
     return typeof message === "string" && message !== "" ? message.slice(0, 300) : `Rotproof answered ${response.status}.`;
 }
+/** The live site's pages, as many answers as it takes. Null, with a note, if Rotproof can't say. */
+async function readLivePages(io, headers, siteId) {
+    const pages = [];
+    let readAt = null;
+    let after = null;
+    do {
+        const query = after === null ? "" : `?after=${encodeURIComponent(after)}`;
+        const response = await io.request("GET", `${exports.API_ORIGIN}/v1/sites/${encodeURIComponent(siteId)}/pages${query}`, headers);
+        const body = response.status === 200 ? readJson(response.body) : null;
+        if (body === null || !Array.isArray(body.pages)) {
+            return { live: null, notes: [`Rotproof couldn't list your live site's pages, so pages missing from this build weren't looked for. ${response.status === 200 ? "Its answer couldn't be read." : refusal(response)}`] };
+        }
+        readAt = typeof body.readAt === "number" ? body.readAt : null;
+        for (const entry of body.pages) {
+            const row = entry;
+            if (typeof row === "object" && row !== null && typeof row.url === "string" && /^https?:\/\//i.test(row.url))
+                pages.push({ url: row.url, title: typeof row.title === "string" ? row.title : null });
+        }
+        after = typeof body.next === "string" && body.next !== "" ? body.next : null;
+    } while (after !== null && pages.length < exports.MAX_LIVE_PAGES);
+    const notes = after === null ? [] : [`Rotproof found more than ${exports.MAX_LIVE_PAGES.toLocaleString("en-US")} pages on your live site. The first ${exports.MAX_LIVE_PAGES.toLocaleString("en-US")} were compared with this build.`];
+    if (readAt === null)
+        notes.push("Rotproof hasn't finished a check of your live site yet, so pages missing from this build weren't looked for.");
+    return { live: { pages: pages.slice(0, exports.MAX_LIVE_PAGES), readAt }, notes };
+}
 /**
- * Finds the site, then sends the addresses a list at a time and waits for each. Never throws:
- * whatever goes wrong is a note, and the answers already in hand are kept.
+ * Finds the site, reads its live pages, then sends the addresses a list at a time and waits for
+ * each. Never throws: whatever goes wrong is a note, and the answers already in hand are kept.
  */
 async function askRotproof(io, token, root, urls) {
-    const asked = { setup: null, notes: [], byUrl: new Map() };
+    const asked = { setup: null, notes: [], byUrl: new Map(), live: null };
     const headers = { Authorization: `Bearer ${token}`, "User-Agent": "rotproof-check-links" };
     const stopped = (note) => ({ ...asked, notes: [...asked.notes, asked.byUrl.size === 0 ? `${note} Links to other sites weren't checked.` : `${note} Some links to other sites weren't checked.`] });
     try {
@@ -149,6 +154,10 @@ async function askRotproof(io, token, root, urls) {
             return { ...asked, setup: "This token's organization has no site with that address in Rotproof. Check the `site` setting against the address on rotproof.dev/sites." };
         if (site.verified !== true)
             return { ...asked, setup: "That site isn't verified in Rotproof yet. Verify it at rotproof.dev/sites, then run this again." };
+        // The live pages first: one or a few quick answers, and nothing to wait for.
+        const live = await readLivePages(io, headers, site.id);
+        asked.live = live.live;
+        asked.notes.push(...live.notes);
         const base = `${exports.API_ORIGIN}/v1/sites/${encodeURIComponent(site.id)}/link-checks`;
         const deadline = io.now() + MAX_WAIT_MS;
         for (let start = 0; start < urls.length; start += exports.MAX_LIST) {
@@ -194,7 +203,22 @@ const label = (link) => {
 };
 async function run(inputs, io) {
     const failOn = inputs.failOn === "new" || inputs.failOn === "all" ? inputs.failOn : "none";
-    const outcome = { setupError: null, failed: false, failOn, newBreaks: [], inBuild: [], already: [], unchecked: 0, notes: [], pages: 0, links: 0 };
+    const outcome = {
+        setupError: null,
+        failed: false,
+        failOn,
+        newBreaks: [],
+        inBuild: [],
+        already: [],
+        unchecked: 0,
+        missing: [],
+        missingFolders: [],
+        liveReadAt: null,
+        redirects: null,
+        notes: [],
+        pages: 0,
+        links: 0,
+    };
     const stop = (error) => ({ ...outcome, setupError: error, failed: true });
     if (inputs.failOn !== "" && inputs.failOn !== failOn)
         return stop('`fail-on` must be "none", "new" or "all".');
@@ -216,7 +240,7 @@ async function run(inputs, io) {
     for (const file of pagePaths.slice(0, exports.MAX_PAGES)) {
         const html = io.read(file);
         if (html !== null)
-            pages.set(file, (0, html_scan_1.scanPage)(html, pageUrl(root, file)));
+            pages.set(file, (0, html_scan_1.scanPage)(html, (0, paths_1.pageUrl)(root, file)));
     }
     outcome.pages = pages.size;
     if (pages.size < Math.min(pagePaths.length, exports.MAX_PAGES))
@@ -234,7 +258,7 @@ async function run(inputs, io) {
                 see(elsewhere, link.url, place);
                 continue;
             }
-            const target = builtFile(root, link.url, files);
+            const target = (0, paths_1.builtFile)(root, link.url, files);
             if (target === null) {
                 see(notInBuild, link.url, place);
                 continue;
@@ -249,6 +273,7 @@ async function run(inputs, io) {
     const wanted = [...notInBuild.keys(), ...elsewhere.keys()];
     const urls = wanted.slice(0, exports.MAX_LIST * exports.MAX_LISTS);
     let answers = new Map();
+    let live = null;
     if (token === "") {
         outcome.notes.push("No token was given, so only links to the site's own pages were checked. This is expected on a pull request from a fork.");
     }
@@ -260,6 +285,30 @@ async function run(inputs, io) {
             return stop(asked.setup);
         outcome.notes.push(...asked.notes);
         answers = asked.byUrl;
+        live = asked.live;
+    }
+    if (live !== null && live.readAt !== null) {
+        const linksTo = new Map();
+        for (const [url, seen] of notInBuild)
+            linksTo.set((0, moved_1.pageKey)(url), (linksTo.get((0, moved_1.pageKey)(url)) ?? 0) + seen.count);
+        const redirectsFile = files.has("_redirects") ? io.read("_redirects") : null;
+        const missing = (0, moved_1.findMissing)({
+            root,
+            live: live.pages,
+            files,
+            built: [...pages].map(([file, page]) => ({ file, url: (0, paths_1.pageUrl)(root, file), title: page.title })),
+            rules: redirectsFile === null ? [] : (0, moved_1.readRedirectRules)(redirectsFile, new URL(root).host),
+            linksTo,
+        });
+        outcome.liveReadAt = live.readAt;
+        outcome.missing = missing.pages;
+        outcome.missingFolders = missing.folders;
+        const home = (0, paths_1.builtFile)(root, root, files);
+        outcome.redirects = (0, moved_1.redirectHelp)((0, moved_1.redirectTool)(files, home === null ? null : (0, moved_1.generatorOf)(io.read(home) ?? "")), root, missing.pages);
+        if (missing.mostlyMissing !== null) {
+            const { missing: count, live: total } = missing.mostlyMissing;
+            outcome.notes.push(`${count} of the ${total} pages Rotproof found on your live site aren't in this build, so they weren't listed one by one. Check that \`path\` is the folder with the whole finished site.`);
+        }
     }
     for (const [url, seen] of notInBuild) {
         const answer = answers.get(url);

@@ -5,9 +5,11 @@
  * anywhere. Nothing here needs a runtime, so both give the same answer for the same link.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_ANCHORS_PER_PAGE = exports.MAX_LINKS_PER_PAGE = void 0;
+exports.MAX_TITLE = exports.MAX_ANCHORS_PER_PAGE = exports.MAX_LINKS_PER_PAGE = void 0;
 exports.isNonPageRel = isNonPageRel;
 exports.decodeHtmlEntities = decodeHtmlEntities;
+exports.clamp = clamp;
+exports.cleanText = cleanText;
 exports.resolveBase = resolveBase;
 exports.resolveHref = resolveHref;
 exports.fragmentTargetState = fragmentTargetState;
@@ -79,6 +81,28 @@ function decodeHtmlEntities(input) {
             return fromCodePoint(parseInt(hex, 16));
         return NAMED_ENTITIES.get(name ?? "") ?? match;
     });
+}
+/** A page's title is kept to this many characters, by both readers. */
+exports.MAX_TITLE = 300;
+/** Cut to length without leaving half a surrogate pair, which storage would reject. */
+function clamp(text, max) {
+    if (text.length <= max)
+        return text;
+    const cut = text.charCodeAt(max - 1);
+    return text.slice(0, cut >= 0xd800 && cut <= 0xdbff ? max - 1 : max);
+}
+/**
+ * Text from a page as it's kept: entities decoded, on one line, no credentials. Every step is
+ * linear, so a link's text (up to the whole text buffer) costs little. It's scrubbed before
+ * it's cut: a cut first could split user:password@ before its @, and the scrubber would then
+ * leave the password in.
+ */
+function cleanText(raw, max) {
+    const decoded = decodeHtmlEntities(raw)
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    return clamp((0, url_1.scrubUrlCredentials)(decoded), max);
 }
 /** Per the HTML spec an unusable <base> is ignored, so fall back to the page's URL. */
 function resolveBase(href, pageUrl) {

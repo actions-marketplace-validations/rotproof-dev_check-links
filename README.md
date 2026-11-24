@@ -42,8 +42,17 @@ Start with `none`. Switch to `new` once the report is one you'd act on.
 - **Broken inside the build.** A link to a page that isn't in the build, or to a section that isn't on its page. A page missing from the build may be served by something else, such as a redirect, so this is a failure only with `fail-on: all`.
 - **Already broken on your site.** Mentioned, and never a failure: the change didn't add them.
 - **Couldn't be checked.** Some sites turn away automated checks. That's never counted as broken.
+- **Live pages missing from this build.** Pages Rotproof found on your live site, from its sitemap, that the build has nothing at and no redirect for. Once the change is published, links to them from other sites, search results and bookmarks break. For each, the report suggests where it probably moved, a new page with the same title or the same name, and writes the redirect for you when the build has a `_redirects` file or was made by Docusaurus, Hugo or Jekyll. For other tools, see [how to add a redirect](https://rotproof.dev/build-check#redirects). Needs the token, and never fails the check: your host may redirect in settings the build doesn't contain.
 
 The report is on the run's summary page. A broken link shows as a warning, or as an error when it fails the check.
+
+## Outputs
+
+| Output | What it is |
+| --- | --- |
+| `new-breaks` | How many broken links the change adds. |
+| `in-build` | How many links are broken inside the build itself. |
+| `missing-pages` | How many pages on the live site the build has nothing at, and no redirect for. |
 
 ## Pull requests from forks
 
@@ -56,10 +65,13 @@ GitHub doesn't give secrets to a pull request from a fork, so there's no token a
 - Rotproof checks 500 addresses a list and up to 10 lists a run, inside your plan's daily link checks.
 - At most 25 new requests go to any one other website per list.
 - If Rotproof can't be reached, the check reports that and doesn't fail your build.
+- Missing pages are found from Rotproof's latest check of your live site: weekly on the Free plan, daily on the others. A page removed since then is listed until the next check.
 
 ## What Rotproof receives
 
 The addresses of the links in your built site, your token, and the site's address. Rotproof requests those addresses as `RotproofBot`, at one request a second per website, and keeps the results for 7 days. See the [privacy policy](https://rotproof.dev/privacy).
+
+Rotproof sends back the addresses and titles of your live site's pages, and the comparison with your build happens on GitHub's machine. Your build's pages are never sent.
 
 This Action makes requests to `rotproof.dev` and nowhere else.
 

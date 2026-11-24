@@ -1,6 +1,7 @@
 # The Action's own test: runs it on test/site, a tiny build of docs-test.rotproof.dev with links
-# broken on purpose, and checks what it finds. Without the ROTPROOF_TOKEN secret, only the part
-# that needs no token runs.
+# broken on purpose, and checks what it finds. With the ROTPROOF_TOKEN secret, it also asks
+# Rotproof, and runs it on a build that removes some of the live site's pages. Without the secret,
+# only the part that needs no token runs.
 name: Test
 
 on:
@@ -65,13 +66,67 @@ jobs:
           site: https://docs-test.rotproof.dev
           token: ${{ secrets.ROTPROOF_TOKEN }}
 
-      - name: Expect two new breaks and one problem in the build
+      # The test site has 2 of the live site's pages, so none is listed as removed: a note says
+      # most of the live site is missing instead.
+      - name: Expect two new breaks, one problem in the build and no pages listed as removed
         if: env.HAS_TOKEN == 'true'
         env:
           IN_BUILD: ${{ steps.full.outputs.in-build }}
           NEW_BREAKS: ${{ steps.full.outputs.new-breaks }}
+          MISSING: ${{ steps.full.outputs.missing-pages }}
         run: |
-          if [ "$IN_BUILD" != 1 ] || [ "$NEW_BREAKS" != 2 ]; then
-            echo "::error::Expected in-build 1 and new-breaks 2, got $IN_BUILD and $NEW_BREAKS."
+          if [ "$IN_BUILD" != 1 ] || [ "$NEW_BREAKS" != 2 ] || [ "$MISSING" != 0 ]; then
+            echo "::error::Expected in-build 1, new-breaks 2 and missing-pages 0, got $IN_BUILD, $NEW_BREAKS and $MISSING."
+            exit 1
+          fi
+
+      # A change that removes pages. Every page in docs-test.rotproof.dev's sitemap, empty, then:
+      # one moved to another folder, one renamed with its title kept, one moved with a redirect
+      # in the build, and one deleted while a link to it stays. Rotproof's checks of the live site
+      # read its first 100 pages, which include all four.
+      - name: Make a build that removes pages
+        if: env.HAS_TOKEN == 'true'
+        run: |
+          mkdir removes-pages
+          curl -fsS --retry 3 https://docs-test.rotproof.dev/sitemap.xml \
+            | grep -o '<loc>https://docs-test\.rotproof\.dev/[^<]*</loc>' \
+            | sed -e 's#^<loc>https://docs-test\.rotproof\.dev/##' -e 's#</loc>$##' \
+            | while IFS= read -r page; do
+                case "$page" in ""|*/) page="${page}index.html" ;; esac
+                mkdir -p "removes-pages/$(dirname "$page")"
+                printf '<!doctype html>\n' > "removes-pages/$page"
+              done
+          cd removes-pages
+          for page in appendix/humorust.html appendix/glossary.html asm.html compiler-team.html; do
+            if [ ! -f "$page" ]; then echo "::error::The live site's sitemap no longer lists $page."; exit 1; fi
+          done
+          mkdir fun
+          mv appendix/humorust.html fun/humorust.html
+          rm appendix/glossary.html
+          printf '<!doctype html>\n<title>Appendix B: Glossary - Rust Compiler Development Guide</title>\n' > appendix/terms.html
+          mv asm.html inline-assembly.html
+          printf '/asm.html /inline-assembly.html 301\n' > _redirects
+          rm compiler-team.html
+          printf '<!doctype html>\n<title>Test build</title>\n<a href="/compiler-team.html">About the compiler team</a>\n' > index.html
+
+      - name: Check the build that removes pages
+        id: removes
+        if: env.HAS_TOKEN == 'true'
+        uses: ./
+        with:
+          path: removes-pages
+          site: https://docs-test.rotproof.dev
+          token: ${{ secrets.ROTPROOF_TOKEN }}
+
+      # The link left to the deleted page is in the build's problems too, as not in this build.
+      - name: Expect three pages listed as removed, and the link to one of them
+        if: env.HAS_TOKEN == 'true'
+        env:
+          IN_BUILD: ${{ steps.removes.outputs.in-build }}
+          NEW_BREAKS: ${{ steps.removes.outputs.new-breaks }}
+          MISSING: ${{ steps.removes.outputs.missing-pages }}
+        run: |
+          if [ "$IN_BUILD" != 1 ] || [ "$NEW_BREAKS" != 0 ] || [ "$MISSING" != 3 ]; then
+            echo "::error::Expected in-build 1, new-breaks 0 and missing-pages 3, got $IN_BUILD, $NEW_BREAKS and $MISSING."
             exit 1
           fi

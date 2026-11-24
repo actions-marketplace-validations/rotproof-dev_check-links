@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { run } = require("./dist/apps/action/src/run.js");
-const { logLines, renderSummary } = require("./dist/apps/action/src/report.js");
+const { logLines, missingCount, renderSummary } = require("./dist/apps/action/src/report.js");
 
 // The same cap the crawler puts on a page (crawler rule 8).
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -54,7 +54,7 @@ async function main() {
   const outcome = await run({ site: input("site"), token: input("token"), failOn: input("fail-on") }, io);
   for (const line of logLines(outcome)) console.log(line);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderSummary(outcome));
-  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `new-breaks=${outcome.newBreaks.length}\nin-build=${outcome.inBuild.length}\n`);
+  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `new-breaks=${outcome.newBreaks.length}\nin-build=${outcome.inBuild.length}\nmissing-pages=${missingCount(outcome)}\n`);
   if (outcome.failed) process.exitCode = 1;
 }
 

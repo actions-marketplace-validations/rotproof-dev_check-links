@@ -110,6 +110,7 @@ function scanPage(html, pageUrl) {
     let linksTruncated = false;
     let baseHref = null;
     let hiddenDepth = 0;
+    let title = null;
     const addAnchor = (value) => {
         if (value === undefined || value === "")
             return;
@@ -204,8 +205,13 @@ function scanPage(html, pageUrl) {
         }
         if (name === "plaintext")
             break;
-        if (RAW_TEXT.has(name))
-            i = rawTextEnd(html, name, i);
+        if (RAW_TEXT.has(name)) {
+            const end = rawTextEnd(html, name, i);
+            // parsePage stops gathering a title soon after twice the length it keeps.
+            if (name === "title" && hiddenDepth === 0 && title === null)
+                title = (0, links_1.cleanText)(html.slice(i, Math.min(end, i + links_1.MAX_TITLE * 8)), links_1.MAX_TITLE);
+            i = end;
+        }
         // A self-closed <svg/> or <math/> has no content. <template/> isn't self-closing in HTML.
         else if (HIDDEN.has(name) && !(tag.selfClosing && name !== "template"))
             hiddenDepth++;
@@ -227,5 +233,5 @@ function scanPage(html, pageUrl) {
         }
         links.push({ kind: link.kind, url: resolved.url, fragment: resolved.fragment, host: resolved.host, line });
     }
-    return { links, anchors, anchorsComplete, linksTruncated, skipped };
+    return { title, links, anchors, anchorsComplete, linksTruncated, skipped };
 }
